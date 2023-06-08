@@ -1,0 +1,345 @@
+---
+title: "British Columbia Electric Vehicles Provincial Descriptive Report"
+author: "Sean Hellingman"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r packages, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(14)
+#rm(list = ls())
+if(!require(readr)) install.packages("readr")
+library(readr)
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+if(!require(knitr)) install.packages("knitr")
+library(knitr)
+if(!require(kableExtra)) install.packages("kableExtra")
+library(kableExtra)
+if(!require(broom)) install.packages("broom")
+library(broom)
+if(!require(ggplot2)) install.packages("ggplot2")
+library(ggplot2)
+if(!require(sf)) install.packages("sf")
+library(sf)
+if(!require(bcmaps)) install.packages("bcmaps")
+library(bcmaps)
+if(!require(mapview)) install.packages("mapview")
+library(mapview)
+if(!require(plotly)) install.packages("plotly")
+library(plotly)
+if(!require(gridExtra)) install.packages("gridExtra")
+library(gridExtra)
+
+#if(!require(lme4)) install.packages("lme4")
+#library(lme4)
+#if(!require(MASS)) install.packages("MASS")
+#library(MASS)
+#if(!require(nnet)) install.packages("nnet")
+#library(nnet)
+#if(!require(randomForest)) install.packages("randomForest")
+#library(randomForest)
+#if(!require(caret)) install.packages("caret")
+#library(caret)
+```
+
+<h1>Introduction</h1>
+
+This analysis provides some initial and important insights into British Columbia's public EV charging network. The focus of the work is on uncovering some descriptive insights into the dispersion of existing and planned EV charging stations. Further examination into the share of charger and connector types in British Columbia is also conducted. Where available, EV charger pricing, which facilities currently have EV chargers, and charging station hours of operations are also explored. The information uncovered in this report provides directions of future, more in depth analysis.     
+
+<h3>Key Findings</h3>
+
+* Most existing or planned EV charging stations are in the Lower Mainland.
+* There is currently a large gap in the existing public charging network between Fort St. John and Fort Nelson.
+* Telsa only connector types make up approximately 45\% of the DC Fast charge only stations.
+
+<h1>Data Discription</h1>
+
+```{r data,message = FALSE, echo=FALSE}
+EV <- read_csv("EV.csv")
+
+```
+
+Following the selection criteria on March 16, 2023, there are 1772 EV charging stations listed in the data. The data contain but are not limited to, information about the locations, charger types, connector types, prices, hours of operation, network types, and if the stations are planned or currently operational. There are additional variables in the data that are related to other fuel types.      
+
+<h3>Data Cleaning</h3>
+
+It is apparent that there are some inconsistencies with the cases of cities in the data. For example, the city of Vancouver is listed as <em>Vancouver</em>, <em>VANCOUVER</em>, and <em>vancouver</em>. In order to obtain city specific information, all city names were made upper case. Furthermore, one observation is mislabeled as being from B.C. but is actually in Québec and needed to be removed from the analysis leaving 1771 observations.
+
+As some stations have both Level 2 and DC Fast chargers a factor with three levels was created and labeled <em>Type</em>. Possible values for this variable are EV Level 2 & DC Fast, EV Level 2, and DC Fast. Due to inconsistencies in how the pricing is quantified, the levels of the pricing for using EV stations were reduced to a factor indicating if all chargers at the station are free or not (Free, Pay). One station indicates that charging is free but they do accept donations, this charging station is classified as free and any station that requires a parking fee are classified not free (Pay).      
+
+```{r Cleaning,message = FALSE, echo=FALSE}
+EV$City <- toupper(EV$City)
+EV$Operational <- substring(EV$`Groups With Access Code`,1,4)
+#Planned or operational
+EV$Operational <- ifelse(EV$Operational == "PLAN","Planned","Operational")
+#Remove not from B.C.
+EV <- subset(EV,EV$City != "GATINEAU")
+
+#Charger Type
+EV$Type <- ifelse(!is.na(EV$`EV Level2 EVSE Num`) & !is.na(EV$`EV DC Fast Count`),"EV Level 2 & DC Fast",
+            ifelse(!is.na(EV$`EV Level2 EVSE Num`) & is.na(EV$`EV DC Fast Count`),"EV Level 2","DC Fast"))
+
+EV$`EV Pricing` <- toupper(EV$`EV Pricing`)
+EV$Cost <- ifelse(EV$`EV Pricing` == "FREE" | EV$`EV Pricing` == "FREE; DONATIONS ACCEPTED", "Free", "Pay")
+
+#N <- EV %>% select(Type,`EV Level2 EVSE Num`,`EV DC Fast Count`)
+```
+
+<h1>Analysis</h1>
+
+
+
+<h3>Dispersion of Charging Stations</h3>
+
+Vancouver currently has the most public EV stations either planned or in operation with 284 currently listed in the data, accounting for just over 16\% of the provincial coverage. Victoria has the next highest share with 112 public EV stations either planned or in operation. Overall, there are 199 planned public charging stations listed in the data. There are 20 communities including Bella Coola, Lillooet, and Spences Bridge that do not currently have an operational public EV station but do have plans for one. The table below shows the 15 communities with the most EV charging stations. 
+
+```{r Locations_Served,message = FALSE, echo=FALSE}
+
+CityFreq <- as.data.frame(table(EV$City))
+CityFreq <- CityFreq[order(-CityFreq$Freq),]
+names(CityFreq)[names(CityFreq) == "Var1"] <- "City"
+kable(head(CityFreq,15),row.names = FALSE, col.names = c("City","EV Stations"))
+
+EV <- merge(EV,CityFreq,by = "City", all.x = TRUE)
+ 
+rm(CityFreq) #Remove unused data
+
+#sum(as.numeric(EV$`Groups With Access Code` == "PLANNED - not yet accessible (Public)")) #199 planned
+#sum(as.numeric(CityFreq$Freq == 1)) #96 cities with only one
+
+#table(EV$`Groups With Access Code`)
+
+Planned <- subset(EV,EV$`Groups With Access Code` == "PLANNED - not yet accessible (Public)" & EV$Freq == 1)
+#nrow(Planned) #20 Cities
+rm(Planned) #Not needed
+
+```
+
+
+
+
+<h4>Interactive Map</h4>
+
+An interactive map was included in this analysis as it provides the user with a clear visual representation of the EV network in B.C. The user may click on the EV charging stations in order to find out more information about the specific station such as, address, price, hours, connector type(s), and facility type. Different layers including more detailed road maps and topographical information is built into the functionality of the interactive map [2].   
+
+```{r Map,message = FALSE, echo=FALSE}
+#Keep useful information for interactive map:
+EVMap <-  EV %>%
+  select(c('City','Station Name',"ID",'Street Address','ZIP',"Cost","EV Pricing","Station Phone",
+           "Groups With Access Code", "Access Days Time","EV Level2 EVSE Num","EV DC Fast Count",
+           "EV Network","EV Network Web","Latitude","Longitude","EV Connector Types","Facility Type",
+           "Type", "Operational"))
+
+#Interactive map:
+mapview(EVMap, xcol = "Longitude", ycol = "Latitude",zcol = "Operational", crs = 4269, grid = FALSE)
+
+rm(EVMap) #Remove data from memory
+```
+
+The map shows a high concentration of EV charging stations in the southern portion of B.C. Many of the stations are located on the southern portion of Vancouver Island, the Lower Mainland, and Thompson Okanagan regions of B.C. with additional stations located on some of the main transportation routes including the Cariboo and Yellowhead highways. The EV charging station located in Fort Nelson is currently the furthest north in B.C. and the next closest charging station is in Fort St. John which is approximately 380 kilometres away. Although the range of electric vehicles has been increasing, the distance between Fort Nelson and Fort St. John is prohibitive of EV travel as the average range of electronic vehicles is approximately 386 kilometres [1]. Furthermore, much of northern B.C. does not contain any public EV charging stations.     
+
+
+
+
+<h3>Types of EV Chargers in B.C.</h3>
+
+Of the charging stations either in operation or planned in B.C. approximately 77.9\% of them support only EV Level 2 chargers, 20\% of them support DC Fast chargers, and 2.03\% support both. This is shown in the pie chart below. Given the size of British Columbia, appropriately locating public DC Fast chargers along travel routes could go a long way in encouraging the use of electric vehicles as the charging time required for DC Fast chargers is much shorter than Level 2 chargers [3]. 
+
+```{r PieChargType,message = FALSE, echo=FALSE}
+
+#Counts of charger types
+A <- as.data.frame(table(EV$Type))
+mydata <- data.frame(group=A$Var1, FR=A$Freq)
+
+q <- plot_ly(mydata, labels = ~group, values = ~FR, type = 'pie') %>%
+  layout(title = "Share of EV Charger Types B.C.",          
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+q
+
+#mapview(EVMap, xcol = "Longitude", ycol = "Latitude",zcol = "Type", crs = 4269, grid = FALSE)
+#rm(EVMap)
+```
+
+When examining the number of available chargers at each station it is apparent than many stations only have one charger available. The histogram below shows that the most frequent number of available chargers at the Level 2 charging station is two. With regards to the DC Fast chargers the most frequent number of chargers available at each station is only one. As they are fast chargers by design, this may not be an immediate cause for concern but it could be something to look into as the network improves. 
+
+The 3700 Willingdon Ave charging station in Burnaby has by far the most Level 2 chargers available with 60 chargers. The Silver Creek Travel Centre - Tesla Supercharger charging station in Hope has the most DC Fast chargers with 24.
+
+```{r Number_Chargers,message = FALSE, echo=FALSE, warning=FALSE}
+
+#Number of chargers at each station
+L2 <- ggplot(EV, aes(x=`EV Level2 EVSE Num`)) + 
+  geom_histogram() + 
+  labs(title="Number of Level 2 Chargers at Each Station",
+        x ="Number of Level 2 Chargers", y = "Frequency")
+  
+DC <- ggplot(EV, aes(x=`EV DC Fast Count`)) + 
+  geom_histogram() + 
+  xlim(0,60)+
+  labs(title="Number of DC Fast Chargers at Each Station",
+        x ="Number of DC Fast Chargers", y = "Frequency")
+
+
+grid.arrange(L2,DC,nrow=2)
+```
+
+
+
+
+<h3>EV Connector Types in B.C.</h3>
+
+
+The interactive pie chart below gives the percentages of the connector types. The user may click on any of the connector types in the legend and recalculate the percentages without that connector type. The primary connector type available in B.C. is the J1772. The J1772 is available at nearly 94\% of the operational and planned public charging locations. 6.41\% of the charging station connector types are Tesla only, and few locations are equipped for multiple connector types.   
+
+```{r PieConType,message = FALSE, echo=FALSE}
+
+#Count of connector types/combinations
+A <- as.data.frame(table(EV$`EV Connector Types`))
+mydata <- data.frame(group=A$Var1, FR=A$Freq)
+
+q <- plot_ly(mydata, labels = ~group, values = ~FR, type = 'pie') %>%
+  layout(title = "EV Connector Types Types B.C.",          
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+q
+
+
+#sum(as.numeric(na.omit(EV$`EV Connector Types` == "TESLA" & EV$Type =="DC Fast")))
+
+```
+
+
+
+
+<h3>EV Pricing in B.C.</h3>
+
+Information regarding the pricing in British Columbia is quite sparse as this information is not available for over 75\% of current or planned charging stations. Where the information exists, over 85\% of the stations only equipped with DC Fast chargers require some kind of payment for their use. In contrast, only around 15\% of the Level 2 charging stations require some kind of payment for their use. These results should be interpreted with caution due to the many missing price observations.      
+
+
+```{r PiePrice,message = FALSE, echo=FALSE}
+
+#EV Pricing by charger type
+#table(EV$`EV Pricing`)
+#sum(as.numeric(is.na(EV$`EV Pricing`))) #1376
+A <- as.data.frame(table(EV$Cost,EV$Type))
+names(A)[names(A) == "Var1"] <- "Cost"
+names(A)[names(A) == "Freq"] <- "Number of Stations"
+names(A)[names(A) == "Var2"] <- "Charger Type"
+
+ggplot(A, aes(x = `Charger Type`, y = `Number of Stations`, fill = Cost)) +
+  geom_col()
+
+```
+
+
+
+
+<h3>Facility Types in B.C.</h3>
+
+When examining the facility type of the charging stations, any type that had nine or fewer observations was classified into the OTHER category. Furthermore, 1295 of the locations are missing their facility type so any conclusions drawn from these results should be done with caution. Where the information exists hotels, shopping centres, and parking lots make up the greatest shares of charging station locations. The interactive pie chart below shows the percentages of each kind of facility location found in the data.  
+
+```{r PieFacType,message = FALSE, echo=FALSE}
+
+#Where are chargers located?
+#sum(as.numeric(is.na(EV$`Facility Type`))) #1295
+
+A <- as.data.frame(table(EV$`Facility Type`))
+A$Var1 <- as.character(A$Var1)
+A$Var1 <- ifelse(A$Freq < 10, "OTHER", A$Var1)
+mydata <- data.frame(group=A$Var1, FR=A$Freq)
+
+q <- plot_ly(mydata, labels = ~group, values = ~FR, type = 'pie') %>%
+  layout(title = "EV Charging Station Facility Types Types B.C.",          
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+q
+
+
+#sum(as.numeric(na.omit(EV$`EV Connector Types` == "TESLA" & EV$Type =="DC Fast")))
+
+```
+
+
+<h3>Hours of Operation</h3>
+
+The hours of operation are missing in only 343 locations. As the pie chart below shows that most public EV charging stations in B.C. are open 24 hours a day. This bodes well for the accessibility of charging stations for EV users.    
+
+```{r Hours,message = FALSE, echo=FALSE}
+
+#Hours
+#sum(as.numeric(is.na(EV$`Access Days Time`))) 
+
+A <- EV
+A$`Access Days Time` <- toupper(A$`Access Days Time`)
+A$`Access Days Time` <- as.character(A$`Access Days Time`)
+A$`Access Days Time` <- ifelse(is.na(A$`Access Days Time`),"Unknown",A$`Access Days Time`)
+
+A <- as.data.frame(table(A$`Access Days Time`))
+
+
+A$Var1 <- substring(A$Var1, first=1, last=14)
+
+A$Var1 <- ifelse(A$Var1 != "24 HOURS DAILY" & A$Var1 != "Unknown", "NOT 24/7",A$Var1)
+
+
+
+#A$Var1 <- ifelse(A$Freq < 5, "OTHER", A$Var1)
+mydata <- data.frame(group=A$Var1, FR=A$Freq)
+
+q <- plot_ly(mydata, labels = ~group, values = ~FR, type = 'pie') %>%
+  layout(title = "Share of EV Charging Stations Open 27/7",          
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+q
+
+
+rm(A,mydata) #Not needed
+#sum(as.numeric(na.omit(EV$`EV Connector Types` == "TESLA" & EV$Type =="DC Fast")))
+
+```
+
+<h1>Conclusions</h1>
+
+This analysis has provided more understanding of the current public EV charging network in British Columbia. The interactive map allows for users to visualize the locations of charging stations as well as providing information about the individual stations. Information about the charger and connector types, pricing, facility types, and hours of operation has been presented. These findings may be used as a platform for more advanced analysis into the EV charging network in British Columbia.   
+
+<h3>Task Specific Questions</h3>
+
+
+
+<strong>After analyzing this dataset, did you think of any interesting questions you would have liked to answer if you had more time and/or resources?</strong>
+
+In order to better determine how well serviced British Columbians are, this data should be joined with census data to be able to incorporate population densities and demographic information in the analysis. The highest number of EV chargers exist in Vancouver, but this dataset does little to inform the user if there are enough chargers currently in operation. Further information regarding the current distribution and usage of electric vehicles in B.C. would go a long way in determining how effective the current system is, and where improvements need to be made. 
+
+Panel data could be used to model and then project future numbers of electric vehicles in use in British Columbia. This information would be useful in projecting future infrastructure needs and in identifying potential areas of improvement. Furthermore, historical data could be used to model the progress of the EV charging network.
+
+
+Further analysis into travel routes that are conducive to EV travel should be conducted. The presence of specific charger types and the distance between charging stations will go a long way in determining the feasibility of EV travel between communities.    
+
+<strong>Did you notice any gaps or concerns with B.C.’s public EV charging station network? Do you have any suggestions on how the EV charging network could be improved?</strong>
+
+One major gap in the existing network exists between Fort St. John and Fort Nelson as this distance is right at the average maximum distance of electric vehicles. Although sparsely populated, very little public EV infrastructure currently exists in B.C.'s north. Additional DC Fast charging stations along major travel routes may encourage more people to use electric vehicles to travel between communities. Furthermore, many of the listed locations only have one charger, so if someone is using the lone charger potential users will have to find an alternative location to charge their vehicle. 
+
+Another area of potential concern is the compatibility of charging stations with certain vehicles. For example, stations with Telsa only connector types make up only 6.41\% of the overall charging stations but they make up approximately 45\% of the DC Fast charge only stations. 
+
+<strong>Comment on the quality and format of the data provided through the Electric Charging and Alternative Fueling Stations Locator? Are there any key suggestions you would recommend for improving the data quality and format?</strong>
+
+Information regarding the frequency and duration of usage at each station would go a long way in determining the current demands of the EV charging station network. Variables such as the operating hours, price, and facility type are missing for many observations. In order to conduct any kind of robust analysis including these variables the data would need to be improved. A harmonized method in presenting the pricing may also be useful for more in depth analysis.  
+
+<h1>Resources</h1>
+
+[1] Canada energy regulator / Régie de l'énergie du Canada: "Market Snapshot: Average electric vehicle range almost doubled in the last six years" (2019) URL: https://www.cer-rec.gc.ca/en/data-analysis/energy-markets/market-snapshots/2019/market-snapshot-average-electric-vehicle-range-almost-doubled-in-last-six-years.html
+
+[2] Tim Appelhans and Florian Detsch and Christoph Reudenbach and Stefan Woellauer. "mapview: Interactive Viewing of Spatial Data in R" (2023) URL: https://github.com/r-spatial/mapview
+
+[3] Zhang, Li, Brendan Shaffer, Tim Brown, and G. Scott Samuelsen. "The optimization of DC fast charging deployment in California." <em>Applied energy 157</em> (2015): 111-122.
+ 
+
